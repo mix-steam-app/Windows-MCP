@@ -33,8 +33,12 @@ _BLUE = (45, 145, 255)
 _AMBER = (255, 170, 55)
 
 _user32 = ctypes.windll.user32
-_user32.GetCursorPos.argtypes = [ctypes.POINTER(flash_overlay._POINT)]
-_user32.GetCursorPos.restype = wintypes.BOOL
+# GetCursorPos gets a private prototype: argtypes set on the shared
+# ctypes.windll.user32 apply process-wide, and uia.core.GetCursorPos passes
+# wintypes.POINT, which this narrower prototype would reject.
+_GetCursorPos = ctypes.WinDLL("user32").GetCursorPos
+_GetCursorPos.argtypes = [ctypes.POINTER(flash_overlay._POINT)]
+_GetCursorPos.restype = wintypes.BOOL
 _user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
 _user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
 _user32.IsWindowVisible.argtypes = [wintypes.HWND]
@@ -188,7 +192,7 @@ def _build_layers(
                     )
                 )
         point = flash_overlay._POINT()
-        if not _user32.GetCursorPos(ctypes.byref(point)):
+        if not _GetCursorPos(ctypes.byref(point)):
             raise RuntimeError("cannot locate cursor for AI control indicator")
         ring = _Layer(
             point.x - _CURSOR_SIZE // 2,
@@ -344,7 +348,7 @@ class _Indicator:
                             visible = True
                         if not pending:
                             point = flash_overlay._POINT()
-                            if _user32.GetCursorPos(ctypes.byref(point)):
+                            if _GetCursorPos(ctypes.byref(point)):
                                 ring.move(point.x - _CURSOR_SIZE // 2, point.y - _CURSOR_SIZE // 2)
                         else:
                             ring.hide()
