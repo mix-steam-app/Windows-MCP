@@ -690,7 +690,10 @@ class Desktop:
         else:
             x, y = loc
         if clicks == 0:
-            uia.SetCursorPos(x, y)
+            if uia.RealInputEnabled():
+                uia.ArriveAt(x, y)
+            else:
+                uia.SetCursorPos(x, y)
             return
         match button:
             case "left":
@@ -855,9 +858,20 @@ class Desktop:
 
     def move(self, loc: tuple[int, int]):
         x, y = loc
-        uia.MoveTo(x, y, moveSpeed=10)
+        if uia.RealInputEnabled():
+            # A full glide even for a short hop, so the app sees the pointer arrive.
+            uia.GlideTo(x, y)
+        else:
+            uia.MoveTo(x, y, moveSpeed=10)
 
     def shortcut(self, shortcut: str):
+        lone = shortcut.strip()
+        if uia.RealInputEnabled() and len(lone) == 1 and lone in uia.CharacterCodes:
+            # SendKeys types a lone character as a Unicode character, which games
+            # ignore; press its virtual key and scan code instead. (After a
+            # modifier, SendKeys already sends the virtual key.)
+            uia.TapKey(uia.CharacterCodes[lone])
+            return
         keys = shortcut.split("+")
         sendkeys_str = ""
         for key in keys:
