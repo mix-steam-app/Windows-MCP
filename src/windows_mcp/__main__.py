@@ -656,6 +656,14 @@ def main():
     envvar="WINDOWS_MCP_STATELESS_HTTP",
     show_default=True,
 )
+@click.option(
+    "--real-input",
+    help="Move the pointer with real mouse-move events instead of SetCursorPos, gliding to each click target and settling first, and send a lone Shortcut key as a virtual key rather than a Unicode character. For apps that read raw input or track hover, such as games.",
+    is_flag=True,
+    default=False,
+    envvar="WINDOWS_MCP_REAL_INPUT",
+    show_default=True,
+)
 def serve(
     ctx,
     transport,
@@ -674,6 +682,7 @@ def serve(
     oauth_client_id,
     oauth_client_secret,
     stateless_http,
+    real_input,
 ):
     global _control_config
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -693,6 +702,10 @@ def serve(
     except (FileNotFoundError, ValueError) as exc:
         raise click.ClickException(str(exc))
     _control_config = cfg.control
+    if real_input:
+        from windows_mcp.uia import core as uia_core
+
+        uia_core.SetRealInput(True)
 
     transport = _choose_value(ctx, "transport", transport, cfg.server.transport, "stdio")
     host = _choose_value(ctx, "host", host, cfg.server.host, "localhost")

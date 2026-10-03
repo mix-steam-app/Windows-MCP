@@ -243,6 +243,80 @@ def AbsoluteMouseEvent(buttonFlag: int, x: int, y: int) -> None:
     )
 
 
+# Real-input mode (--real-input). SetCursorPos teleports the pointer without
+# emitting any movement input, so apps that read raw input or track hover
+# (games above all) never see the pointer arrive and a click lands on whatever
+# they last saw under it. In real-input mode the pointer moves with absolute
+# mouse_event moves instead, and a click glides to its target and settles first.
+_real_input = False
+
+# A glide is REAL_INPUT_GLIDE_STEPS moves REAL_INPUT_GLIDE_INTERVAL apart, then a
+# small wiggle and REAL_INPUT_SETTLE seconds so the app registers the hover.
+REAL_INPUT_GLIDE_STEPS = 15
+REAL_INPUT_GLIDE_INTERVAL = 0.015
+REAL_INPUT_SETTLE = 0.15
+
+
+def SetRealInput(enabled: bool) -> None:
+    """Turn real-input mode on or off for every pointer helper in this module."""
+    global _real_input
+    _real_input = bool(enabled)
+
+
+def RealInputEnabled() -> bool:
+    """Return True when real-input mode is on."""
+    return _real_input
+
+
+def MovePointer(x: int, y: int) -> None:
+    """
+    Put the pointer at x, y: a real absolute move event in real-input mode,
+    SetCursorPos otherwise.
+    """
+    if _real_input:
+        AbsoluteMouseEvent(0, x, y)
+    else:
+        SetCursorPos(x, y)
+
+
+def SettlePointer(x: int, y: int) -> None:
+    """
+    In real-input mode, wiggle the pointer off x, y and back, then wait, so the
+    app sees movement end on the target before any button goes down.
+    """
+    if not _real_input:
+        return
+    left, top, width, height = GetVirtualScreenRect()
+    wx = x + 2 if x + 2 < left + width else x - 2
+    wy = y + 1 if y + 1 < top + height else y - 1
+    AbsoluteMouseEvent(0, wx, wy)
+    time.sleep(0.04)
+    AbsoluteMouseEvent(0, x, y)
+    time.sleep(REAL_INPUT_SETTLE)
+
+
+def ArriveAt(x: int, y: int) -> None:
+    """
+    Bring the pointer to x, y before a click or press. Outside real-input mode
+    this is SetCursorPos. In real-input mode the pointer glides from where it
+    is and settles; if it is already there (the second click of a double
+    click), nothing moves, so the clicks stay within the double-click time.
+    """
+    if not _real_input:
+        SetCursorPos(x, y)
+        return
+    cx, cy = GetCursorPos()
+    if (cx, cy) == (x, y):
+        return
+    steps = REAL_INPUT_GLIDE_STEPS
+    for step in range(1, steps + 1):
+        AbsoluteMouseEvent(
+            0, cx + round((x - cx) * step / steps), cy + round((y - cy) * step / steps)
+        )
+        time.sleep(REAL_INPUT_GLIDE_INTERVAL)
+    SettlePointer(x, y)
+
+
 def keybd_event(bVk: int, bScan: int, dwFlags: int, dwExtraInfo: int) -> None:
     """keybd_event from Win32."""
     ctypes.windll.user32.keybd_event(bVk, bScan, dwFlags, dwExtraInfo)
@@ -284,7 +358,7 @@ def Click(x: int, y: int, waitTime: float = OPERATION_WAIT_TIME) -> None:
     y: int.
     waitTime: float.
     """
-    SetCursorPos(x, y)
+    ArriveAt(x, y)
     AbsoluteMouseEvent(MouseEventFlag.LeftDown, x, y)
     time.sleep(0.05)
     AbsoluteMouseEvent(MouseEventFlag.LeftUp, x, y)
@@ -298,7 +372,7 @@ def MiddleClick(x: int, y: int, waitTime: float = OPERATION_WAIT_TIME) -> None:
     y: int.
     waitTime: float.
     """
-    SetCursorPos(x, y)
+    ArriveAt(x, y)
     AbsoluteMouseEvent(MouseEventFlag.MiddleDown, x, y)
     time.sleep(0.05)
     AbsoluteMouseEvent(MouseEventFlag.MiddleUp, x, y)
@@ -312,7 +386,7 @@ def RightClick(x: int, y: int, waitTime: float = OPERATION_WAIT_TIME) -> None:
     y: int.
     waitTime: float.
     """
-    SetCursorPos(x, y)
+    ArriveAt(x, y)
     AbsoluteMouseEvent(MouseEventFlag.RightDown, x, y)
     time.sleep(0.05)
     AbsoluteMouseEvent(MouseEventFlag.RightUp, x, y)
@@ -326,7 +400,7 @@ def PressMouse(x: int, y: int, waitTime: float = OPERATION_WAIT_TIME) -> None:
     y: int.
     waitTime: float.
     """
-    SetCursorPos(x, y)
+    ArriveAt(x, y)
     AbsoluteMouseEvent(MouseEventFlag.LeftDown, x, y)
     time.sleep(waitTime)
 
@@ -348,7 +422,7 @@ def RightPressMouse(x: int, y: int, waitTime: float = OPERATION_WAIT_TIME) -> No
     y: int.
     waitTime: float.
     """
-    SetCursorPos(x, y)
+    ArriveAt(x, y)
     AbsoluteMouseEvent(MouseEventFlag.RightDown, x, y)
     time.sleep(waitTime)
 
@@ -370,7 +444,7 @@ def MiddlePressMouse(x: int, y: int, waitTime: float = OPERATION_WAIT_TIME) -> N
     y: int.
     waitTime: float.
     """
-    SetCursorPos(x, y)
+    ArriveAt(x, y)
     AbsoluteMouseEvent(MouseEventFlag.MiddleDown, x, y)
     time.sleep(waitTime)
 
@@ -419,9 +493,10 @@ def MoveTo(x: int, y: int, moveSpeed: float = 1, waitTime: float = OPERATION_WAI
             cy = curY + int(yStep * i)
             # upper-left(0,0), lower-right(65536,65536)
             # mouse_event(MouseEventFlag.Move | MouseEventFlag.Absolute, cx*65536//screenWidth, cy*65536//screenHeight, 0, 0)
-            SetCursorPos(cx, cy)
+            MovePointer(cx, cy)
             time.sleep(interval)
-    SetCursorPos(x, y)
+    MovePointer(x, y)
+    SettlePointer(x, y)
     time.sleep(waitTime)
 
 
@@ -431,7 +506,8 @@ def MoveToDuration(x: int, y: int, duration: float, waitTime: float = OPERATION_
     """
     curX, curY = GetCursorPos()
     if duration <= 0:
-        SetCursorPos(x, y)
+        MovePointer(x, y)
+        SettlePointer(x, y)
         time.sleep(waitTime)
         return
 
@@ -441,8 +517,9 @@ def MoveToDuration(x: int, y: int, duration: float, waitTime: float = OPERATION_
         ratio = i / stepCount
         cx = curX + round((x - curX) * ratio)
         cy = curY + round((y - curY) * ratio)
-        SetCursorPos(cx, cy)
+        MovePointer(cx, cy)
         time.sleep(interval)
+    SettlePointer(x, y)
     time.sleep(waitTime)
 
 
@@ -1316,6 +1393,22 @@ def ReleaseKey(key: int, waitTime: float = OPERATION_WAIT_TIME) -> None:
     waitTime: float.
     """
     keybd_event(key, 0, KeyboardEventFlag.KeyUp | KeyboardEventFlag.ExtendedKey, 0)
+    time.sleep(waitTime)
+
+
+def TapKey(key: int, holdTime: float = 0.06, waitTime: float = OPERATION_WAIT_TIME) -> None:
+    """
+    Press and release key with both its virtual-key and scan code, so apps that
+    read either (games often read scan codes) see it.
+    key: int, a value in class `Keys`.
+    holdTime: float, seconds the key stays down.
+    waitTime: float.
+    """
+    scan = _VKtoSC(key)
+    extended = KeyboardEventFlag.ExtendedKey if scan & 0x100 else 0
+    keybd_event(key, scan & 0xFF, KeyboardEventFlag.KeyDown | extended, 0)
+    time.sleep(holdTime)
+    keybd_event(key, scan & 0xFF, KeyboardEventFlag.KeyUp | extended, 0)
     time.sleep(waitTime)
 
 

@@ -54,6 +54,14 @@ _KEY_ALIASES = {
 }
 
 
+def _move_pointer(x: int, y: int) -> None:
+    """Put the pointer at x, y: a real move event in real-input mode, SetCursorPos otherwise."""
+    if uia.RealInputEnabled():
+        uia.MovePointer(x, y)
+    else:
+        uia.SetCursorPos(x, y)
+
+
 def _snapshot_profile_enabled() -> bool:
     value = os.getenv("WINDOWS_MCP_PROFILE_SNAPSHOT", "")
     return value.strip().lower() in {"1", "true", "yes", "on"}
@@ -729,7 +737,10 @@ class Desktop:
         self._validate_screen_point(x, y)
         if clicks == 0:
             owner.checkpoint_current()
-            uia.SetCursorPos(x, y)
+            if uia.RealInputEnabled():
+                uia.ArriveAt(x, y)
+            else:
+                uia.SetCursorPos(x, y)
             return
         match button:
             case "left":
@@ -954,6 +965,10 @@ class Desktop:
                 lambda: owner.physical_mouse_down("left"),
             )
             owner.record_step_current()
+            real_input = uia.RealInputEnabled()
+            if real_input:
+                # Let the app pick the item up before it moves.
+                sleep(uia.REAL_INPUT_SETTLE)
             # Keep both the legacy drag and duration-based drag interruptible.
             steps = (
                 max(1, min(80, max(abs(x - cx), abs(y - cy)) // 20))
@@ -961,14 +976,19 @@ class Desktop:
                 else max(1, min(200, math.ceil(effective_duration / 0.01)))
             )
             interval = 0.01 if effective_duration is None else effective_duration / steps
+            if real_input and effective_duration is None:
+                steps = max(steps, 2 * uia.REAL_INPUT_GLIDE_STEPS)
+                interval = uia.REAL_INPUT_GLIDE_INTERVAL
             for step in range(1, steps + 1):
                 owner.checkpoint_current()
-                uia.SetCursorPos(
+                _move_pointer(
                     cx + round((x - cx) * step / steps), cy + round((y - cy) * step / steps)
                 )
                 owner.record_step_current()
                 if interval:
                     sleep(interval)
+            # Let the app see the item over the target before the drop.
+            uia.SettlePointer(x, y)
         finally:
             owner.input_ledger.release("mouse:left")
         return {"start": [cx, cy], "end": [x, y], "duration": effective_duration}
@@ -979,16 +999,31 @@ class Desktop:
         owner.checkpoint_current()
         cx, cy = uia.GetCursorPos()
         steps = max(1, min(80, max(abs(x - cx), abs(y - cy)) // 20))
+        interval = 0.003
+        if uia.RealInputEnabled():
+            steps = max(steps, uia.REAL_INPUT_GLIDE_STEPS)
+            interval = uia.REAL_INPUT_GLIDE_INTERVAL
         for step in range(1, steps + 1):
             owner.checkpoint_current()
-            uia.SetCursorPos(cx + (x - cx) * step // steps, cy + (y - cy) * step // steps)
+            _move_pointer(cx + (x - cx) * step // steps, cy + (y - cy) * step // steps)
             owner.record_step_current()
-            sleep(0.003)
+            sleep(interval)
+        if uia.RealInputEnabled():
+            owner.checkpoint_current()
+            uia.SettlePointer(x, y)
 
     def shortcut(self, shortcut: str):
         owner = get_controller()
         owner.checkpoint_current()
         keys = shortcut.split("+")
+        lone = shortcut.strip()
+        if uia.RealInputEnabled() and len(lone) == 1 and lone in uia.CharacterCodes:
+            # SendKeys types a lone character as a Unicode character, which games
+            # ignore; press its virtual key and scan code instead. (After a
+            # modifier, SendKeys already sends the virtual key.)
+            uia.TapKey(uia.CharacterCodes[lone])
+            owner.record_step_current()
+            return
         sendkeys_str = ""
         for key in keys:
             key = key.strip()
